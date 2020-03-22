@@ -1,7 +1,7 @@
 import setuptools
 from pathlib import Path
 
-version = (0, 0, 1)
+version = (0, 1, 0)
 package_name = next(Path(__file__).parent.joinpath('src').iterdir()).name
 
 with open('requirements.txt') as fp:
