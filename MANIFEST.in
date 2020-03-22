@@ -1,0 +1,2 @@
+include LICENSE README.md requirements.txt requirements_dev.txt
+recursive-include src/aiodesktop/static/ *.js

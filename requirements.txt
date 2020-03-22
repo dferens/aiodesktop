@@ -1,0 +1,2 @@
+aiohttp>=3.1
+whichcraft==0.6.1

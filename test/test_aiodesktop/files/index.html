@@ -1,0 +1,39 @@
+<html>
+<body>
+<script>
+    function httpGetAsync(url, params, callback) {
+        let xmlHttp = new XMLHttpRequest();
+        xmlHttp.onreadystatechange = function() {
+            if (xmlHttp.readyState === 4)
+                callback(xmlHttp.responseText);
+        };
+
+        let fullUrl = new URL(location.origin + url);
+        fullUrl.search = new URLSearchParams(params);
+        xmlHttp.open('GET', fullUrl.toString(), true);
+        xmlHttp.send(null);
+    }
+
+    async function onConnect(server) {
+        server.expose({
+            syncGetData() {
+                return {
+                    data: {
+                        list: [1, 2],
+                        string: 'test'
+                    }
+                }
+            },
+            async asyncGetData() {
+                return {
+                    data: {
+                        list: [1, 2],
+                        string: 'test'
+                    }
+                }
+            }
+        });
+    }
+</script>
+</body>
+</html>

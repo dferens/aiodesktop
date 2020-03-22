@@ -1,0 +1,5 @@
+twine==3.1.1
+setuptools==46.0.0
+tox==3.14.5
+timeout-decorator==0.4.1
+PyInstaller==3.6

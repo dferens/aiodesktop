@@ -1,0 +1,82 @@
+version: 2.1
+
+orbs:
+  python: circleci/python@0.2.1
+
+jobs:
+  build-and-test:
+    docker:
+      - image: circleci/python:3.8.2-browsers
+    steps:
+      - checkout
+
+      - restore_cache:
+          keys:
+          - v1-python-versions
+
+      - run:
+          name: install Python versions
+          command: |
+            [ ! -d "/home/circleci/.pyenv" ] && curl -L https://raw.githubusercontent.com/pyenv/pyenv-installer/master/bin/pyenv-installer | bash
+            export PATH="/home/circleci/.pyenv/bin:$PATH"
+            eval "$(pyenv init -)"
+            pyenv install 3.6.10 --skip-existing
+            pyenv install 3.7.6 --skip-existing
+            pyenv install 3.8.1 --skip-existing
+            pyenv global 3.6.10 3.7.6 3.8.1
+            echo "Installed Python versions"
+      - save_cache:
+          paths:
+            - /home/circleci/.pyenv/
+          key: v1-python-versions
+
+      - run:
+          name: install chrome requirements
+          command: |
+            sudo apt-get install libgbm-dev
+
+      # Download and cache dependencies
+      - restore_cache:
+          keys:
+          - v3-dependencies-{{ checksum "requirements_dev.txt" }}
+
+      - run:
+          name: install dependencies
+          command: |
+            export PATH="/home/circleci/.pyenv/bin:$PATH"
+            eval "$(pyenv init -)"
+            pip install -r requirements_dev.txt
+            tox -vv --notest
+      - save_cache:
+          paths:
+            - ./.tox/
+          key: v3-dependencies-{{ checksum "requirements_dev.txt" }}
+
+      - restore_cache:
+          keys:
+            - chrome-binary
+
+      # run tests!
+      - run:
+          name: run tests
+          command: |
+            export PATH="/home/circleci/.pyenv/bin:$PATH"
+            eval "$(pyenv init -)"
+            tox
+
+      - save_cache:
+          paths:
+            - .downloads
+          key: chrome-binary
+
+      - store_artifacts:
+          path: test-reports
+          destination: test-reports
+
+
+
+workflows:
+  main:
+    jobs:
+      - build-and-test
+
