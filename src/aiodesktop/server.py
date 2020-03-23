@@ -150,15 +150,18 @@ class Server:
         if isinstance(dir_path, str):
             dir_path = Path(dir_path)
 
-        root = get_cwd()
+        abs_path = dir_path.resolve()
+        abs_root = get_cwd().resolve()
 
         try:
-            rel_path = dir_path.relative_to(root)
+            abs_path.relative_to(abs_root)
         except ValueError:
-            raise ValueError('Dir path must be relative to %r', root)
+            raise ValueError(
+                'Directory path %s must be relative to %r', abs_path, abs_root
+            )
         else:
             self._app.router.add_routes([
-                web.static(url_prefix, rel_path, name=name),
+                web.static(url_prefix, dir_path, name=name),
             ])
 
     def get_file_url(self, file_path: str, name: str) -> str:
@@ -206,7 +209,8 @@ class Server:
         assert isinstance(index_html, (str, Path)), index_html
 
         if isinstance(index_html, Path):
-            assert index_html.exists(), index_html
+            if not index_html.exists():
+                raise ValueError('Path does not exist: %s' % index_html)
 
         self._ensure_packages()
         self._index_html = index_html
