@@ -22,8 +22,8 @@
             this.ws.onerror = (e) => {
                 this.onError && this.onError(e);
             };
-            this.ws.onclose = () => {
-                this.onClose && this.onClose();
+            this.ws.onclose = (e) => {
+                this.onClose && this.onClose(e);
             };
         }
 
@@ -113,13 +113,23 @@
             this.chan.onError = async e => {
                 console.error(e)
             };
-            this.chan.onClose = async () => {
-                console.debug('ws conn close');
+            this.chan.onClose = async (e) => {
+                if (!e.wasClean) {
+                    // Channel has been closed but we didn't receive `close` message,
+                    // most likely -> server died
+                    window.close();
+                }
             };
             window.onbeforeunload = () => this.chan.close();
             this._idCounter = 0;
             this._pendingReturns = [];
             this._fns = {};
+        }
+
+        async _on_close() {
+            console.debug('received close message');
+            this.chan.onClose = null;
+            window.close()
         }
 
         _addReturn(id, resolve, reject) {
@@ -160,11 +170,6 @@
             console.debug(`received return for #${id} -> ${ret}`);
             let [resolve, _] = this._popReturn(id);
             resolve(ret);
-        }
-
-        async _on_close() {
-            console.debug('received close message');
-            window.close()
         }
 
         async _send_call(id, name, args) {

@@ -3,22 +3,26 @@ import inspect
 import json
 import logging
 import os.path
-import pathlib
+from pathlib import Path
 import socket
 import time
 import urllib.parse
 from typing import Dict, Any, Callable, Awaitable, Tuple, Optional, List, Union
 import aiohttp
 from aiohttp import web
+import pkg_resources as pkg
 
-from .compat import asyncio_create_task
+from .compat import get_cwd, asyncio_create_task
 
 
 logger = logging.getLogger(__name__)
 
 Message = Dict[str, Any]
 
-STATIC_PATH = pathlib.Path(__file__).parent / 'static'
+STATIC_PATH = pkg.resource_filename('aiodesktop', 'static')
+
+# noinspection PyStatementEffect
+Path(__file__).parent  # mark directory for pyinstaller
 
 
 class Channel:
@@ -139,13 +143,23 @@ class Server:
         )
         return start_url
 
-    def serve_files(self, url_prefix: str, dir_path: str, name: str = None):
+    def serve_files(self, url_prefix: str, dir_path: Union[str, Path], name: str = None):
         """
         Serve directory files on given url.
         """
-        self._app.router.add_routes([
-            web.static(url_prefix, dir_path, name=name),
-        ])
+        if isinstance(dir_path, str):
+            dir_path = Path(dir_path)
+
+        root = get_cwd()
+
+        try:
+            rel_path = dir_path.relative_to(root)
+        except ValueError:
+            raise ValueError('Dir path must be relative to %r', root)
+        else:
+            self._app.router.add_routes([
+                web.static(url_prefix, rel_path, name=name),
+            ])
 
     def get_file_url(self, file_path: str, name: str) -> str:
         """
@@ -169,7 +183,7 @@ class Server:
         return str(router.url_for(**kwargs))
 
     def configure(self, *,
-                  index_html: Union[str, pathlib.Path],
+                  index_html: Union[str, Path],
                   init_js_function: str = 'onConnect',
                   scheme: str = 'http',
                   host: str = '127.0.0.1',
@@ -189,7 +203,10 @@ class Server:
         :param reconnect_timeout_sec: (single mode) wait for client to reconnect
         :param json_impl: library to perform JSON de/serialization
         """
-        assert isinstance(index_html, (str, pathlib.Path)), index_html
+        assert isinstance(index_html, (str, Path)), index_html
+
+        if isinstance(index_html, Path):
+            assert index_html.exists(), index_html
 
         self._ensure_packages()
         self._index_html = index_html
@@ -354,7 +371,7 @@ class Server:
         return out
 
     async def _index_handler(self, _: web.Request):
-        if isinstance(self._index_html, pathlib.Path):
+        if isinstance(self._index_html, Path):
             with open(str(self._index_html), 'rt') as fp:
                 base_html = fp.read()
         else:

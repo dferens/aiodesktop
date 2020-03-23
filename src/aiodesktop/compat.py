@@ -1,5 +1,6 @@
 import asyncio
 import sys
+from pathlib import Path
 from typing import Coroutine
 
 
@@ -26,3 +27,10 @@ if sys.version_info >= (3, 7):
 else:
     def asyncio_create_task(c: Coroutine):
         return asyncio.ensure_future(c)
+
+
+def get_cwd() -> Path:
+    if hasattr(sys, '_MEIPASS'):  # freezed with pyinstaller
+        return Path(sys._MEIPASS)
+    else:
+        return Path.cwd()
