@@ -3,26 +3,25 @@ import inspect
 import json
 import logging
 import os.path
-from pathlib import Path
 import socket
 import time
 import urllib.parse
-from typing import Dict, Any, Callable, Awaitable, Tuple, Optional, List, Union
-import aiohttp
-from aiohttp import web
-import pkg_resources as pkg
+from typing import Dict, Any, Awaitable, Tuple, Callable, List, Optional, Union
 
-from .compat import get_cwd, asyncio_create_task
+import aiohttp
+import pkg_resources
+from aiohttp import web
+
+from .compat import asyncio_create_task
+from .resources import Bundle, Resource
 
 
 logger = logging.getLogger(__name__)
 
 Message = Dict[str, Any]
 
-STATIC_PATH = pkg.resource_filename('aiodesktop', 'static')
 
-# noinspection PyStatementEffect
-Path(__file__).parent  # mark directory for pyinstaller
+class AIODesktopError(Exception): ...
 
 
 class Channel:
@@ -117,6 +116,10 @@ def expose(fn: Callable[[Any], Awaitable]):
     return fn
 
 
+def is_method_exposed(fn: Callable[[Any], Awaitable]) -> bool:
+    return getattr(fn, _MARKER_ATTR, False)
+
+
 class Server:
 
     @property
@@ -134,6 +137,13 @@ class Server:
         return self._app
 
     @property
+    def resources(self) -> Bundle:
+        """
+        Return object for managing bundled files.
+        """
+        return self._resources
+
+    @property
     def start_url(self) -> str:
         assert self._is_configured, f'call {self.configure} first'
         scheme, host, port = self._setup_info
@@ -143,50 +153,35 @@ class Server:
         )
         return start_url
 
-    def serve_files(self, url_prefix: str, dir_path: Union[str, Path], name: str = None):
-        """
-        Serve directory files on given url.
-        """
-        if isinstance(dir_path, str):
-            dir_path = Path(dir_path)
+    def __init__(self):
+        self._resources = Bundle()
+        self._app = web.Application()
 
-        abs_path = dir_path.resolve()
-        abs_root = get_cwd().resolve()
+        @self._app.on_startup.append
+        async def _on_startup(_: web.Application):
+            await self.on_startup()
 
-        try:
-            abs_path.relative_to(abs_root)
-        except ValueError:
-            raise ValueError(
-                'Directory path %s must be relative to %r', abs_path, abs_root
-            )
-        else:
-            self._app.router.add_routes([
-                web.static(url_prefix, dir_path, name=name),
-            ])
+        @self._app.on_shutdown.append
+        async def _on_shutdown(_: web.Application):
+            await self.on_shutdown()
 
-    def get_file_url(self, file_path: str, name: str) -> str:
-        """
-        Get url to file.
-        """
-        router = self._app.router[name]
+        self._channels: List[Channel] = []
+        self._lost_on: Optional[float] = None
+        self._pending_returns: Dict[int, asyncio.Future] = {}
+        self._packages: List[Package] = []
+        self._id_src = 0
 
-        if os.path.isabs(file_path):
-            dir_path = router.get_info()['directory']
-            rel_path = os.path.relpath(file_path, dir_path)
-        else:
-            rel_path = file_path
-
-        return self.reverse_url(name, filename=rel_path)
-
-    def reverse_url(self, name: str, **kwargs) -> str:
-        """
-        Construct url for resource with additional params.
-        """
-        router = self._app.router[name]
-        return str(router.url_for(**kwargs))
+        # Configured state
+        self._is_configured = False
+        self._index_html = None
+        self._setup_info: Optional[str, str, int] = None
+        self._init_js_function = None
+        self._is_single_mode = False
+        self._json_impl = None
+        self._reconnect_timeout_sec = 0
 
     def configure(self, *,
-                  index_html: Union[str, Path],
+                  index_html: Union[str, Resource],
                   init_js_function: str = 'onConnect',
                   scheme: str = 'http',
                   host: str = '127.0.0.1',
@@ -206,25 +201,76 @@ class Server:
         :param reconnect_timeout_sec: (single mode) wait for client to reconnect
         :param json_impl: library to perform JSON de/serialization
         """
-        assert isinstance(index_html, (str, Path)), index_html
+        assert not self._is_configured, 'can only configure once'
 
-        if isinstance(index_html, Path):
-            if not index_html.exists():
-                raise ValueError('Path does not exist: %s' % index_html)
+        if not isinstance(index_html, (str, Resource)):
+            raise AIODesktopError(
+                f'Parameter `index_html` can be either a html string '
+                f'or a {Resource!r} instance, not a {index_html!r}'
+            )
 
-        self._ensure_packages()
+        _port = _get_free_port() if port is None else port
+        self._setup_info = (scheme, host, _port)
         self._index_html = index_html
-
-        if port is None:
-            port = _get_free_port()
-
-        self._setup_info = (scheme, host, port)
-
         self._is_single_mode = single_mode
         self._init_js_function = init_js_function
         self._reconnect_timeout_sec = reconnect_timeout_sec
         self._json_impl = json_impl
+
+        # Download packages
+        self._ensure_packages()
+
+        # Setup our routes
+        self._app.router.add_routes([
+            web.get('/', self._index_handler),
+            web.get('/__ws__/', self._ws_lifecycle, name='private-ws'),
+        ])
+        r_main = self.resources.add(
+            pkg_resources.resource_filename('aiodesktop', 'static'),
+            mount='aiodesktop'
+        )
+        self.serve_resource('/__private__/', r_main, name='private-static')
+
         self._is_configured = True
+
+    def serve_resource(self, url_prefix: str, r: Resource, *, name: str = None):
+        """
+        Serve resource files on given url, example:
+
+            >>> server = Server()
+            >>> r1 = server.resources.add('some/directory')
+            >>> server.serve_resource('/static', r1)  # GET /static/directory/
+
+        """
+        assert isinstance(r, Resource), f'{r!r} must be resource'
+        dir_prefix = urllib.parse.urljoin(url_prefix + '/', str(r.mount))
+        target_path = r.abspath
+
+        if target_path.is_file():
+            # aiohttp only supports serving directories
+
+            async def handler(_: web.Request):
+                return web.FileResponse(target_path)
+
+            self._app.router.add_get(dir_prefix, handler, name=name)
+            logger.debug(
+                'added custom file route: %r -> %r',
+                dir_prefix, target_path
+            )
+        else:
+            route = web.static(dir_prefix, target_path, name=name)
+            self._app.router.add_routes([route])
+            logger.debug(
+                'added static directory route: %r -> %r',
+                dir_prefix, target_path
+            )
+
+    def reverse_url(self, name: str, **kwargs) -> str:
+        """
+        Get url from view name and kwargs.
+        """
+        router = self._app.router[name]
+        return str(router.url_for(**kwargs))
 
     def run(self, **kwargs):
         """
@@ -299,37 +345,6 @@ class Server:
         for url, file_name in packages.items():
             self._packages.append((url, file_name, save_dir))
 
-    def __init__(self):
-        self._app = web.Application()
-        self._app.router.add_routes([
-            web.get('/', self._index_handler),
-            web.get('/__ws__/', self._ws_lifecycle, name='private-ws'),
-            web.static('/__static__/', STATIC_PATH, name='private-static'),
-        ])
-
-        @self._app.on_startup.append
-        async def _on_startup(_: web.Application):
-            await self.on_startup()
-
-        @self._app.on_shutdown.append
-        async def _on_shutdown(_: web.Application):
-            await self.on_shutdown()
-
-        self._channels: List[Channel] = []
-        self._lost_on: Optional[float] = None
-        self._pending_returns: Dict[int, asyncio.Future] = {}
-        self._packages: List[Package] = []
-        self._id_src = 0
-
-        # Configured state
-        self._is_configured = False
-        self._index_html = None
-        self._setup_info: Optional[str, str, int] = None
-        self._init_js_function = None
-        self._is_single_mode = False
-        self._json_impl = None
-        self._reconnect_timeout_sec = 0
-
     def _ensure_packages(self):
         def get_path(p: Package) -> str:
             url, file_name, d = p
@@ -363,20 +378,29 @@ class Server:
     def _build_insert_code(self):
         _, host, port = self._setup_info
         return JS_INLINE % dict(
-            script_url=self.get_file_url('bootstrap.js', 'private-static'),
+            script_url=self.reverse_url(
+                name='private-static',
+                filename='bootstrap.js',
+            ),
             ws_url=f'ws://{host}:{port}{self.reverse_url("private-ws")}',
             init_function=self._init_js_function,
         )
 
     def _patch_html(self, html: str) -> str:
-        insert_code = self._build_insert_code()
-        insert_pos = html.rindex('</html>')
-        out = html[:insert_pos] + insert_code + html[insert_pos:]
-        return out
+        try:
+            insert_pos = html.rindex('</html>')
+        except ValueError:
+            raise AIODesktopError(
+                f'Could not patch html, is given string valid? {html!r}'
+            )
+        else:
+            insert_code = self._build_insert_code()
+            out = html[:insert_pos] + insert_code + html[insert_pos:]
+            return out
 
     async def _index_handler(self, _: web.Request):
-        if isinstance(self._index_html, Path):
-            with open(str(self._index_html), 'rt') as fp:
+        if isinstance(self._index_html, Resource):
+            with open(str(self._index_html.abspath), 'rt') as fp:
                 base_html = fp.read()
         else:
             base_html = self._index_html
@@ -421,7 +445,7 @@ class Server:
         except AttributeError as e:
             error = e, f'method not found: {name!r}'
         else:
-            if not hasattr(fn, _MARKER_ATTR):
+            if not is_method_exposed(fn):
                 e = ValueError('')
                 error = e, f'method {name!r} is not exposed with {expose!r}'
             else:

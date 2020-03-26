@@ -9,6 +9,9 @@ from aiohttp import web
 import aiodesktop
 
 
+FILES_DIR = Path(__file__) / '..' / 'files'
+
+
 def launch_chrome_for_tests(url):
     return aiodesktop.launch_chrome(
         url,
@@ -58,7 +61,7 @@ class AllTestCase(unittest.TestCase):
         # import logging; logging.basicConfig(level=logging.DEBUG)
         server = TestServer(self)
         server.configure(
-            index_html=Path(__file__).parent.joinpath('files', 'index.html'),
+            index_html=server.resources.add(FILES_DIR / 'index.html'),
             init_js_function='onConnect',
         )
         completed = False

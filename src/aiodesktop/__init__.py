@@ -1,3 +1,3 @@
-from .compat import get_cwd
+from .resources import Resource
 from .server import Server, Channel, Message, expose
 from .browser import launch_chrome, ensure_local_chromium
