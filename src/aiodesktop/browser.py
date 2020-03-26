@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 
 from . import compat
 
@@ -249,7 +249,7 @@ def ensure_local_chromium() -> Path:
 
 def launch_chrome(
     start_url: str, *args: str,
-    path=None,
+    path: Union[str, Path] = None,
     search_installed=True,
     fullscreen=False,
     headless=False,
@@ -273,7 +273,7 @@ def launch_chrome(
         if path is None:
             path = ensure_local_chromium()
 
-    full_args = [path]
+    full_args = [str(path)]
     last_args = []
 
     if headless:

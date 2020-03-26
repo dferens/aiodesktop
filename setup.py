@@ -20,7 +20,7 @@ setuptools.setup(
     long_description_content_type='text/markdown',
     url='https://github.com/dferens/{}'.format(package_name),
     packages=[package_name],
-    package_dir={package_name: Path('src') / package_name},
+    package_dir={package_name: str(Path('src') / package_name)},
     include_package_data=True,
     install_requires=requirements,
     keywords=['gui', 'html', 'javascript', 'electron', 'asyncio', 'websocket'],

@@ -87,8 +87,7 @@ class Bundle:
         """
         Add given path to a resource bundle.
         """
-        # Alias is a normalized relative path from cwd
-        alias = Path(os.path.relpath(path, '.'))
+        alias = Path(path)
 
         if mount is not None:
             mount = Path(mount) if isinstance(mount, str) else mount
