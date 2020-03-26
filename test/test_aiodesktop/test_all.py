@@ -9,7 +9,7 @@ from aiohttp import web
 import aiodesktop
 
 
-FILES_DIR = Path(__file__) / '..' / 'files'
+FILES_DIR = Path(__file__).parent / 'files'
 
 
 def launch_chrome_for_tests(url):
