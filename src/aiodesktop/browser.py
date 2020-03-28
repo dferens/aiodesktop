@@ -5,7 +5,6 @@ import os
 import shutil
 import stat
 import subprocess
-import sys
 import tempfile
 import time
 import urllib.error
@@ -250,20 +249,25 @@ def ensure_local_chromium() -> Path:
 def launch_chrome(
     start_url: str, *args: str,
     path: Union[str, Path] = None,
+    app=True,
     search_installed=True,
     fullscreen=False,
     headless=False,
+    incognito=False,
     debug_port=None,
+    **kwargs,
 ):
     """
-    Start chrome process asynchronously.
+    Launch chrome/chromium process.
 
     :param start_url: initial url to open
     :param args: additional args to `subprocess.Popen`
     :param path: path to chrome binary
+    :param app:
     :param search_installed:
     :param fullscreen:
     :param headless: start without a window
+    :param incognito:
     :param debug_port:
     """
     if path is None:
@@ -282,26 +286,37 @@ def launch_chrome(
         full_args.extend(['--headless', '--repl'])
         last_args.append(start_url)
 
-        if sys.platform.startswith('win'):
+        if compat.get_short_os() == compat.WINDOWS:
             # https://developers.google.com/web/updates/2017/04/headless-chrome#cli
             full_args.append('--disable-gpu')
     else:
-        full_args.append('--app=%s' % start_url)
+        if app:
+            full_args.append('--app=%s' % start_url)
+        else:
+            last_args.append(start_url)
 
     full_args.extend(args)
 
     if fullscreen:
         full_args.append('--start-fullscreen')
 
+    if incognito:
+        full_args.append('--incognito')
+
     if debug_port is not None:
         full_args.append('--remote-debugging-port={}'.format(debug_port))
 
+    if start_url.startswith('https://'):
+        full_args.append('--ignore-certificate-errors')
+
     full_args.extend(last_args)
+    logger.debug('launching chrome: %r', full_args)
     return subprocess.Popen(
         full_args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        stdin=subprocess.PIPE
+        stdin=subprocess.PIPE,
+        **kwargs,
     )
 
 

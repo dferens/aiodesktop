@@ -1,39 +1,9 @@
 (() => {
-    let {ws, fn} = window.__aiodesktop__;
-    let initFunction = window[fn];
+    let config = window.__aiodesktop__;
+    let initFunction = window[config.fn];
 
-    /**
-     * Abstraction over websocket to send & receive json.
-     */
-    class Channel {
-        constructor() {
-            this.onOpened = null;
-            this.onMessage = null;
-            this.onError = null;
-            this.onClose = null;
-
-            this.ws = new WebSocket(ws);
-            this.ws.onopen = () => {
-                this.onOpened && this.onOpened();
-            };
-            this.ws.onmessage = (e) => {
-                this.onMessage && this.onMessage(JSON.parse(e.data));
-            };
-            this.ws.onerror = (e) => {
-                this.onError && this.onError(e);
-            };
-            this.ws.onclose = (e) => {
-                this.onClose && this.onClose(e);
-            };
-        }
-
-        send(data) {
-            this.ws.send(JSON.stringify(data));
-        }
-
-        close() {
-            this.ws.close();
-        }
+    if (initFunction === undefined) {
+        console.error(`'[aiodesktop] window' object does not define function: ${initFunction}`)
     }
 
     function getInvoker(executeFn) {
@@ -91,42 +61,65 @@
         constructor() {
             this.py = getInvoker(this.execute.bind(this));
 
-            this.chan = new Channel();
-            this.chan.onOpened = async () => {
-                initFunction(this);
-            };
-            this.chan.onMessage = async msg => {
-                if (msg.type === 'return') {
-                    // Python returns us value
-                    await this._on_return(msg.id, msg.ret)
-                } else if (msg.type === 'call') {
-                    // Python calls our function
-                    await this._on_call(msg.id, msg.name, msg.args);
-                } else if (msg.type === 'error') {
-                    // Python returned error
-                    await this._on_error(msg.id, msg.error);
-                } else if (msg.type === 'close') {
-                    // TestServer sent shutdown
-                    await this._on_close();
-                }
-            };
-            this.chan.onError = async e => {
-                console.error(e)
-            };
-            this.chan.onClose = async (e) => {
-                if (!e.wasClean) {
-                    // Channel has been closed but we didn't receive `close` message,
-                    // most likely -> server died
-                    window.close();
-                }
-            };
-            window.onbeforeunload = () => this.chan.close();
+            this._ws_opened_on = null;
+            let wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+            this.ws = new WebSocket(`${wsProto}://${window.location.host}${config.ws}`);
+            this.ws.onopen = this._on_ws_open.bind(this);
+            this.ws.onmessage = this._on_ws_message.bind(this);
+            this.ws.onerror = this._on_ws_error.bind(this);
+            this.ws.onclose = this._on_abnormal_close.bind(this);
+            window.onbeforeunload = () => this.ws.close();
             this._idCounter = 0;
             this._pendingReturns = [];
             this._fns = {};
         }
 
-        async _on_close() {
+        async _on_ws_open() {
+            this._ws_opened_on = Date.now();
+            initFunction && initFunction(this);
+        }
+
+        /**
+         * @param {MessageEvent} e
+         */
+        async _on_ws_message(e) {
+            let msg = JSON.parse(e.data);
+
+            if (msg.type === 'return') {
+                // Python returns us value
+                await this._on_return(msg.id, msg.ret)
+            } else if (msg.type === 'call') {
+                // Python calls our function
+                await this._on_call(msg.id, msg.name, msg.args);
+            } else if (msg.type === 'error') {
+                // Python returned error
+                await this._on_error(msg.id, msg.error);
+            } else if (msg.type === 'close') {
+                // TestServer sent shutdown
+                await this._on_normal_close();
+            }
+        }
+
+        async _on_ws_error(e) {
+            console.error(e);
+        }
+
+        /**
+         * @param {CloseEvent} e
+         */
+        async _on_abnormal_close(e) {
+            // Channel has been closed but we didn't receive `close` message,
+            // most likely -> server died
+            let serverDied = (
+                (this._ws_opened_on != null) &&
+                (!e.wasClean)
+            );
+            if (serverDied) {
+                window.close();
+            }
+        }
+
+        async _on_normal_close() {
             console.debug('received close message');
             this.chan.onClose = null;
             window.close()
@@ -172,15 +165,19 @@
             resolve(ret);
         }
 
+        async _send(data) {
+            this.ws.send(JSON.stringify(data));
+        }
+
         async _send_call(id, name, args) {
             console.debug(`sending call #${id}: ${name}(${args.join(', ')})`);
-            await this.chan.send({type: 'call', id, name, args});
+            await this._send({type: 'call', id, name, args});
         }
 
         async _send_return(id, name, args, ret) {
             ret = (ret === undefined) ? null : ret;
             console.debug(`sending return for #${id}: ${name}(${args.join(', ')}) -> ${ret}`);
-            await this.chan.send({type: 'return', id, ret});
+            await this._send({type: 'return', id, ret});
         }
     }
 

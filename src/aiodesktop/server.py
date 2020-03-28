@@ -376,13 +376,12 @@ class Server:
                     fp.write(text)
 
     def _build_insert_code(self):
-        _, host, port = self._setup_info
         return JS_INLINE % dict(
             script_url=self.reverse_url(
                 name='private-static',
                 filename='bootstrap.js',
             ),
-            ws_url=f'ws://{host}:{port}{self.reverse_url("private-ws")}',
+            ws_url=self.reverse_url('private-ws'),
             init_function=self._init_js_function,
         )
 
