@@ -1,0 +1,16 @@
+h5 {
+    margin-top: 1rem;
+}
+video {
+    background: grey;
+    display: block;
+    margin-bottom: 5px;
+}
+.leaflet-container {
+    margin-bottom: 5px;
+}
+
+#map {
+    width: 600px;
+    height: 400px;
+}

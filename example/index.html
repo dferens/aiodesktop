@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Demo app</title>
+    <link rel="stylesheet" href="./static/dist/bootstrap/css/bootstrap.css">
+</head>
+<body>
+<nav class="navbar navbar-dark navbar-expand-lg bg-primary">
+    <a href="" class="navbar-brand">
+        Demo app
+    </a>
+</nav>
+<div class="container">
+    <div class="row">
+        <div class="col-sm">
+            <h5>Test audio</h5>
+
+            <div class="row">
+                <div class="col-sm">
+                    <audio controls src="./static/dist/media/sound.wav"></audio>
+                </div>
+            </div>
+
+            <h5>Test webcam</h5>
+            <div class="row">
+                <div class="col-sm">
+                    <span id="webcam-status" class="badge"></span>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-sm">
+                    <video autoplay id="video" width="450"></video>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-sm">
+                    <button id="webcam-button" type="button" class="btn btn-outline-primary">
+                        Test webcam
+                    </button>
+                </div>
+            </div>
+
+            <h5>Test notifications</h5>
+            <div class="row">
+                <div class="col-sm">
+                    <span id="notifications-status" class="badge"></span>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-sm">
+                    <button type="button" id="notifications" class="btn btn-outline-primary">
+                        Test notifications
+                    </button>
+                </div>
+            </div>
+
+            <h5>Test WebGL</h5>
+            <div class="row">
+                <div class="col-sm">
+                    <span id="webgl-status" class="badge"></span>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-sm">
+                    <canvas id="webgl" width="450" height="400"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-sm">
+            <h5>Test geolocation</h5>
+            <div class="row">
+                <div class="col-sm">
+                    <span id="geolocation-status" class="badge"></span>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-sm">
+                    <div id="map"></div>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-sm">
+                    <button type="button" id="geolocation" class="btn btn-outline-primary">
+                        Test geolocation
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+<script src="./static/dist/main.js"></script>
+</body>
+</html>

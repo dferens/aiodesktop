@@ -66,3 +66,5 @@ server.configure(
 )
 server.run()
 ```
+
+See [example/](./example/) for a _slightly_ more complicated app;
