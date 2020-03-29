@@ -1,3 +1,4 @@
+import logging
 import subprocess
 import unittest
 from pathlib import Path
@@ -21,15 +22,14 @@ def launch_chrome_for_tests(url):
 
 
 class TestServer(aiodesktop.Server):
-    def __init__(self, test_case):
-        super().__init__()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.coroutine: Awaitable = None
-        self.test_case = test_case
-
+        self.test_case = None
         self.app.router.add_get('/add', self.on_add)
 
     async def on_startup(self):
-        self.test_case.chrome = launch_chrome_for_tests(self.start_url)
+        self.test_case.chrome = launch_chrome_for_tests(self.start_uri)
 
     async def on_connect(self, chan: aiodesktop.Channel) -> None:
         await super().on_connect(chan)
@@ -53,17 +53,20 @@ class AllTestCase(unittest.TestCase):
         self.chrome: Optional[subprocess.Popen] = None
 
     def tearDown(self) -> None:
-        self.chrome.communicate(timeout=1)
-        self.chrome.terminate()
+        if self.chrome is not None:
+            self.chrome.terminate()
 
-    @timeout_decorator.timeout(10)
+    @timeout_decorator.timeout(100000)
     def test_all(self):
-        # import logging; logging.basicConfig(level=logging.DEBUG)
-        server = TestServer(self)
-        server.configure(
-            index_html=server.resources.add(FILES_DIR / 'index.html'),
+        logging.basicConfig(level=logging.DEBUG)
+        bundle = aiodesktop.Bundle()
+        server = TestServer(
+            bundle=bundle,
+            index_html=bundle.add(FILES_DIR / 'index.html'),
             init_js_function='onConnect',
         )
+        server.test_case = self
+
         completed = False
 
         async def test_coroutine():
@@ -80,7 +83,6 @@ class AllTestCase(unittest.TestCase):
                 await server.js.asyncGetData(),
                 {'data': {'list': [1, 2], 'string': 'test'}}
             )
-
             completed = True
 
         server.coroutine = test_coroutine()

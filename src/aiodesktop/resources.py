@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Union, NamedTuple, Mapping, Dict, List, Tuple
+from typing import Union, NamedTuple, Dict, List, Tuple
 
 
 __all__ = ('PathLike', 'Resource', 'Bundle')
@@ -16,27 +16,20 @@ IS_FROZEN = hasattr(sys, '_MEIPASS')
 
 class Resource(NamedTuple):
     bundle: 'Bundle'
-    alias: Path
-    mount: Path
-
-    @property
-    def frozen(self): return IS_FROZEN
+    alias: Path  # path to file on compilation stage
+    mount: Path  # path to file inside bundle
 
     @property
     def abspath(self) -> Path:
+        """
+        Return path to file at runtime.
+        """
         return self.bundle.get_abspath(self)
-
-    @property
-    def exists(self) -> bool:
-        return self.abspath.exists()
 
     def __repr__(self):
         return (
             f'Resource('
-            f'alias={self.alias!r}, '
-            f'mount={self.mount!r}, '
             f'abspath={self.abspath!r}, '
-            f'frozen={self.frozen!r}'
             f')'
         )
 
@@ -44,27 +37,25 @@ class Resource(NamedTuple):
 
 
 class Bundle:
-    @property
-    def prefix(self) -> Path:
-        return self._prefix
+    """
+    Bundles are used to manage files inside directory which is created when
+    PyInstaller runs your exe. When app is ran from executable, PyInstaller
+    adds `sys._MEIPASS` attribute which points to this directory.
 
-    if not IS_FROZEN:
-        @property
-        def items(self) -> Mapping[Path, Resource]:
-            return self._items
+    This class is responsible for:
+      * checking for name clashes
+      * generating `data` argument passed to PyInstaller
+    """
 
-    def __init__(self, prefix=Path('resources'),
-                 items: Mapping[PathLike, PathLike] = None):
-        self._prefix = prefix
-        self._get_pyinstaller_data_called = False
+    def __init__(self, prefix: PathLike = 'resources'):
+        self._prefix = Path(prefix)
 
         if not IS_FROZEN:
             self._items: Dict[Path, Resource] = {}
 
-            if items is not None:
-                for mount in items:
-                    path = items[mount]
-                    self.add(path, mount=mount)
+    @property
+    def prefix(self) -> Path:
+        return self._prefix
 
     if IS_FROZEN:  # available only when frozen
         def get_root(self) -> Path:
@@ -116,33 +107,27 @@ class Bundle:
                 logger.debug('added resource file %r', resource)
         else:
             # When frozen, locate given resource in PyInstaller's directory
-            if not resource.exists:
+            if not resource.abspath.exists():
                 # Instruct user, as this part is tricky
-                if self._get_pyinstaller_data_called:
-                    root = self.get_root()
-                    contents = list(root.glob('*'))
-                    raise ValueError(
-                        f'Path {str(path)!r} not found among registered paths'
-                        f', the contents of the root directory: ' +
-                        (
-                            '\n'.join(f' * {str(p)!r}' for p in contents) + '\n'
-                            if bool(contents)
-                            else '\n * (no files)\n'
-                        ) +
-                        'Please make sure that data arguments were passed '
-                        'to PyInstaller'
-                    )
-                else:
-                    raise ValueError(
-                        f'Data arguments were not passed to PyInstaller, '
-                        f'please use {self.get_pyinstaller_data!r}.'
-                    )
+                root = self.get_root()
+                contents = list(root.glob('*'))
+                raise ValueError(
+                    f'Path {str(path)!r} not found among registered paths'
+                    f', the contents of the root directory: ' +
+                    (
+                        '\n'.join(f' * {str(p)!r}' for p in contents) + '\n'
+                        if bool(contents)
+                        else '\n * (no files)\n'
+                    ) +
+                    'Please make sure that data arguments were passed '
+                    'to PyInstaller'
+                )
 
         return resource
 
     def get_pyinstaller_data(self) -> List[Tuple[str, str]]:
         """
-        Return data argument to PyInstaller.
+        Return data argument to PyInstaller. It's a list of (source, target).
 
         Example usage in .spec files:
 
@@ -161,13 +146,10 @@ class Bundle:
                 out = out.parent
             return out
 
-        try:
-            return [
-                (str(r.abspath), str(get_pyinstaller_path(r)))
-                for r in self._items.values()
-            ]
-        finally:
-            self._get_pyinstaller_data_called = True
+        return [
+            (str(r.abspath), str(get_pyinstaller_path(r)))
+            for r in self._items.values()
+        ]
 
     def get_pyinstaller_args(self) -> str:
         """
@@ -177,19 +159,3 @@ class Bundle:
             f'--add-data={abs_path}{os.pathsep}{target_path}'
             for abs_path, target_path in self.get_pyinstaller_data()
         )
-
-    def __eq__(self, other):
-        return self is other
-
-    def __repr__(self):
-        return (
-            '{}(prefix={!r}, {})'.format(
-                type(self).__name__, self._prefix,
-                (
-                    'root={!r}'.format(str(self.get_root())) if IS_FROZEN else
-                    'items={!r}'.format(self._items)
-                )
-            )
-        )
-
-    __str__ = __repr__

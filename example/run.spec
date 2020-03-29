@@ -5,11 +5,11 @@ import sys; sys.path.append(os.getcwd())
 
 block_cipher = None
 
-resources = importlib.import_module('run').server.resources
+bundle = importlib.import_module('run').bundle
 a = Analysis(['run.py'],
              pathex=[os.getcwd()],
              binaries=[],
-             datas=resources.get_pyinstaller_data(),
+             datas=bundle.get_pyinstaller_data(),
              hiddenimports=[],
              hookspath=[],
              runtime_hooks=[],

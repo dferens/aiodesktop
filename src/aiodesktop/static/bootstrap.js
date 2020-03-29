@@ -121,7 +121,7 @@
 
         async _on_normal_close() {
             console.debug('received close message');
-            this.chan.onClose = null;
+            this.ws.onClose = null;
             window.close()
         }
 

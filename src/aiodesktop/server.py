@@ -6,6 +6,7 @@ import os.path
 import socket
 import time
 import urllib.parse
+from pathlib import Path
 from typing import Dict, Any, Awaitable, Tuple, Callable, List, Optional, Union
 
 import aiohttp
@@ -137,25 +138,86 @@ class Server:
         return self._app
 
     @property
-    def resources(self) -> Bundle:
+    def bundle(self) -> Bundle:
         """
         Return object for managing bundled files.
         """
-        return self._resources
+        return self._bundle
 
     @property
-    def start_url(self) -> str:
-        assert self._is_configured, f'call {self.configure} first'
-        scheme, host, port = self._setup_info
-        # <scheme>://<netloc>/<path>;<params>?<query>#<fragment>
-        start_url = urllib.parse.urlunparse(
-            (scheme, '%s:%d' % (host, port), '/', '', '', '')
-        )
-        return start_url
+    def netloc(self) -> str:
+        """
+        Return network location string like "127.0.0.1:8000"
+        """
+        _, host, port = self._setup_info
+        return f'{host}:{port}'
 
-    def __init__(self):
-        self._resources = Bundle()
-        self._app = web.Application()
+    @property
+    def start_uri(self) -> str:
+        """
+        Return full uri to the initial page.
+        """
+        scheme, host, port = self._setup_info
+        url = self.reverse_url(name='index')
+        # <scheme>://<netloc>/<path>;<params>?<query>#<fragment>
+        _parts = (scheme, self.netloc, url, '', '', '')
+        out = urllib.parse.urlunparse(_parts)
+        return out
+
+    def __init__(self, *,
+                 bundle: Bundle,
+                 index_html: Union[str, Resource],
+                 app: web.Application = None,
+                 init_js_function: str = 'onConnect',
+                 single_mode=True,
+                 json_impl=json,
+                 reconnect_timeout_sec=1.0,
+                 ):
+        """
+        :param bundle: server requires bundle to store own files
+        :param index_html: path to `index.html` or a string with html
+        :param init_js_function: function to be called in JS on client connect
+        :param single_mode: server will close on client disconnect
+        :param reconnect_timeout_sec: (single mode) wait for client to reconnect
+        :param json_impl: library to perform JSON de/serialization
+        """
+        if not isinstance(bundle, Bundle):
+            raise AIODesktopError(
+                f'Parameter {bundle} must be {Bundle!r} instance'
+            )
+
+        if not isinstance(index_html, (str, Resource)):
+            raise AIODesktopError(
+                f'Parameter `index_html` can be either a html string '
+                f'or a {Resource!r} instance, not a {index_html!r}'
+            )
+
+        self._bundle = bundle
+        self._channels: List[Channel] = []
+        self._lost_on: Optional[float] = None
+        self._pending_returns: Dict[int, asyncio.Future] = {}
+        self._packages: List[Package] = []
+        self._index_html = index_html
+        self._setup_info: Optional[str, str, int] = None  # scheme, host, port
+        self._init_js_function = init_js_function
+        self._is_single_mode = single_mode
+        self._json_impl = json_impl
+        self._reconnect_timeout_sec = reconnect_timeout_sec
+        self._id_src = 0
+
+        #
+        # App setup
+        #
+        self._app = web.Application() if app is None else app
+        self._app.add_routes([
+            web.get('/', self._index_handler, name='index'),
+            web.get('/__ws__/', self._ws_lifecycle, name='private-ws'),
+        ])
+        r_main = self._bundle.add(
+            pkg_resources.resource_filename('aiodesktop', 'static'),
+            mount='aiodesktop'
+        )
+        self.serve_resource('/__private__/', r_main, name='private-static')
 
         @self._app.on_startup.append
         async def _on_startup(_: web.Application):
@@ -165,80 +227,12 @@ class Server:
         async def _on_shutdown(_: web.Application):
             await self.on_shutdown()
 
-        self._channels: List[Channel] = []
-        self._lost_on: Optional[float] = None
-        self._pending_returns: Dict[int, asyncio.Future] = {}
-        self._packages: List[Package] = []
-        self._id_src = 0
-
-        # Configured state
-        self._is_configured = False
-        self._index_html = None
-        self._setup_info: Optional[str, str, int] = None
-        self._init_js_function = None
-        self._is_single_mode = False
-        self._json_impl = None
-        self._reconnect_timeout_sec = 0
-
-    def configure(self, *,
-                  index_html: Union[str, Resource],
-                  init_js_function: str = 'onConnect',
-                  scheme: str = 'http',
-                  host: str = '127.0.0.1',
-                  port: int = None,
-                  single_mode=True,
-                  json_impl=json,
-                  reconnect_timeout_sec=1.0):
-        """
-        Prepare server.
-
-        :param index_html: path to `index.html` or a string with html
-        :param init_js_function: function to be called in JS on client connect
-        :param scheme:
-        :param host:
-        :param port:
-        :param single_mode: server will close on client disconnect
-        :param reconnect_timeout_sec: (single mode) wait for client to reconnect
-        :param json_impl: library to perform JSON de/serialization
-        """
-        assert not self._is_configured, 'can only configure once'
-
-        if not isinstance(index_html, (str, Resource)):
-            raise AIODesktopError(
-                f'Parameter `index_html` can be either a html string '
-                f'or a {Resource!r} instance, not a {index_html!r}'
-            )
-
-        _port = _get_free_port() if port is None else port
-        self._setup_info = (scheme, host, _port)
-        self._index_html = index_html
-        self._is_single_mode = single_mode
-        self._init_js_function = init_js_function
-        self._reconnect_timeout_sec = reconnect_timeout_sec
-        self._json_impl = json_impl
-
-        # Download packages
-        self._ensure_packages()
-
-        # Setup our routes
-        self._app.router.add_routes([
-            web.get('/', self._index_handler),
-            web.get('/__ws__/', self._ws_lifecycle, name='private-ws'),
-        ])
-        r_main = self.resources.add(
-            pkg_resources.resource_filename('aiodesktop', 'static'),
-            mount='aiodesktop'
-        )
-        self.serve_resource('/__private__/', r_main, name='private-static')
-
-        self._is_configured = True
-
     def serve_resource(self, url_prefix: str, r: Resource, *, name: str = None):
         """
         Serve resource files on given url, example:
 
             >>> server = Server()
-            >>> r1 = server.resources.add('some/directory')
+            >>> r1 = Bundle().add('some/directory')
             >>> server.serve_resource('/static', r1)  # GET /static/directory/
 
         """
@@ -259,7 +253,7 @@ class Server:
             )
         else:
             route = web.static(dir_prefix, target_path, name=name)
-            self._app.router.add_routes([route])
+            self._app.add_routes([route])
             logger.debug(
                 'added static directory route: %r -> %r',
                 dir_prefix, target_path
@@ -272,12 +266,26 @@ class Server:
         router = self._app.router[name]
         return str(router.url_for(**kwargs))
 
-    def run(self, **kwargs):
+    def require_packages(self, packages: Dict[str, str], save_dir: str):
+        """
+            >>> server = Server()
+            ... server.require_packages({
+            ...  'https://code.jquery.com/jquery-3.4.1.js': 'jquery.js',
+            ... }, save_dir='./vendor')
+        """
+        assert Path(save_dir).exists(), f'Directory {save_dir!r} does not exist'
+        for url, file_name in packages.items():
+            assert url.startswith('http'), f'Variable {url!r} must be a url'
+            self._packages.append((url, file_name, save_dir))
+
+    def run(self, *, scheme='http', host='127.0.0.1', port=None, **kwargs):
         """
         Launch server (this will block)
         """
-        assert self._is_configured, f'call {self.configure} first'
-        _, host, port = self._setup_info
+        self._ensure_packages()
+
+        port = _get_free_port() if port is None else port
+        self._setup_info = (scheme, host, port)
         web.run_app(self.app, host=host, port=port, **kwargs)
 
     async def on_startup(self):
@@ -340,10 +348,6 @@ class Server:
 
             wait_task = asyncio_create_task(asyncio.sleep(wait_for))
             wait_task.add_done_callback(after_sleep)
-
-    def require_packages(self, packages: Dict[str, str], save_dir: str):
-        for url, file_name in packages.items():
-            self._packages.append((url, file_name, save_dir))
 
     def _ensure_packages(self):
         def get_path(p: Package) -> str:

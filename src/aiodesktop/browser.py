@@ -282,14 +282,22 @@ def launch_chrome(
 
     if headless:
         assert not fullscreen
-        # --repl makes it stay alive
-        full_args.extend(['--headless', '--repl'])
+
+        if debug_port is not None:
+            live_arg = '--remote-debugging-port={}'.format(debug_port)
+        else:
+            live_arg = '--repl'  # --repl makes it stay alive
+
+        full_args.extend(['--headless', live_arg])
         last_args.append(start_url)
 
         if compat.get_short_os() == compat.WINDOWS:
             # https://developers.google.com/web/updates/2017/04/headless-chrome#cli
             full_args.append('--disable-gpu')
     else:
+        if debug_port is not None:
+            full_args.append('--remote-debugging-port={}'.format(debug_port))
+
         if app:
             full_args.append('--app=%s' % start_url)
         else:
@@ -302,9 +310,6 @@ def launch_chrome(
 
     if incognito:
         full_args.append('--incognito')
-
-    if debug_port is not None:
-        full_args.append('--remote-debugging-port={}'.format(debug_port))
 
     if start_url.startswith('https://'):
         full_args.append('--ignore-certificate-errors')

@@ -39,7 +39,7 @@ import aiodesktop
 
 class Server(aiodesktop.Server):
     async def on_startup(self):
-        aiodesktop.launch_chrome(self.start_url)
+        aiodesktop.launch_chrome(self.start_uri)
     
     # Use `expose` decorator to mark method as visible from JS
     @aiodesktop.expose
@@ -47,8 +47,9 @@ class Server(aiodesktop.Server):
         # Use `await self.js.xxx()` to call JS functions from Python 
         return 'Hello, ' + await self.js.getWorld()
 
-server = Server()
-server.configure(
+bundle = aiodesktop.Bundle()
+server = Server(
+    bundle=bundle,
     init_js_function='onConnect',
     index_html='''<html><body><script>
     async function onConnect(server) {                        
@@ -67,4 +68,9 @@ server.configure(
 server.run()
 ```
 
-See [example/](./example/) for a _slightly_ more complicated app;
+See [example/](./example/) for a _slightly_ more complicated app with:
+  * static files
+  * pyinstaller executable
+  * JS & webpack
+  * https
+    
