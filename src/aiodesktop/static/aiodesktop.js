@@ -108,7 +108,7 @@
          * @param {CloseEvent} e
          */
         async _on_abnormal_close(e) {
-            // Channel has been closed but we didn't receive `close` message,
+            // WebSocket has been closed but we didn't receive `close` message,
             // most likely -> server died
             let serverDied = (
                 (this._ws_opened_on != null) &&

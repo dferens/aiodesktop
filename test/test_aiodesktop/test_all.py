@@ -31,8 +31,8 @@ class TestServer(aiodesktop.Server):
     async def on_startup(self):
         self.test_case.chrome = launch_chrome_for_tests(self.start_uri)
 
-    async def on_connect(self, chan: aiodesktop.Channel) -> None:
-        await super().on_connect(chan)
+    async def on_connect(self, client: aiodesktop.Client) -> None:
+        await super().on_connect(client)
         await self.coroutine
         await self.stop()
 

@@ -25,7 +25,7 @@ Message = Dict[str, Any]
 class AIODesktopError(Exception): ...
 
 
-class Channel:
+class Client:
     """
     Abstraction to communicate with json.
     """
@@ -43,7 +43,7 @@ class Channel:
     async def close(self):
         await self.ws.close()
 
-    def __aiter__(self) -> 'Channel':
+    def __aiter__(self) -> 'Client':
         return self
 
     async def __anext__(self) -> Message:
@@ -169,7 +169,7 @@ class Server:
                  index_html: Union[str, Resource],
                  app: web.Application = None,
                  init_js_function: str = 'onConnect',
-                 single_mode=True,
+                 wait_for_reconnect=True,
                  json_impl=json,
                  reconnect_timeout_sec=1.0,
                  ):
@@ -177,7 +177,7 @@ class Server:
         :param bundle: server requires bundle to store own files
         :param index_html: path to `index.html` or a string with html
         :param init_js_function: function to be called in JS on client connect
-        :param single_mode: server will close on client disconnect
+        :param wait_for_reconnect: server will close on client disconnect
         :param reconnect_timeout_sec: (single mode) wait for client to reconnect
         :param json_impl: library to perform JSON de/serialization
         """
@@ -193,14 +193,14 @@ class Server:
             )
 
         self._bundle = bundle
-        self._channels: List[Channel] = []
+        self._client: Optional[Client] = None
         self._lost_on: Optional[float] = None
         self._pending_returns: Dict[int, asyncio.Future] = {}
         self._packages: List[Package] = []
         self._index_html = index_html
         self._setup_info: Optional[str, str, int] = None  # scheme, host, port
         self._init_js_function = init_js_function
-        self._is_single_mode = single_mode
+        self._wait_for_reconnect = wait_for_reconnect
         self._json_impl = json_impl
         self._reconnect_timeout_sec = reconnect_timeout_sec
         self._id_src = 0
@@ -298,15 +298,19 @@ class Server:
         Called on server shutdown.
         """
         logger.debug('sending close')
-        await self._send({'type': 'close'})
+        await self._send({'type': 'close'}, safe=True)
 
-    async def on_connect(self, chan: Channel) -> None:
+    async def on_connect(self, client: Client) -> None:
         """
         Called when new client connects.
         """
         logger.debug('received ws connection')
-        self._channels.append(chan)
-        self._lost_on = None
+
+        if self._client is None:
+            self._client = client
+            self._lost_on = None
+        else:
+            raise NotImplementedError('multiple clients not supported')
 
     async def stop(self):
         """
@@ -314,7 +318,7 @@ class Server:
         """
         await self.app.shutdown()
 
-    async def on_message(self, chan: Channel, msg: Message) -> None:
+    async def on_message(self, client: Client, msg: Message) -> None:
         """
         Called on new websocket message.
         """
@@ -325,24 +329,24 @@ class Server:
             # JS returns us value
             await self._on_return(msg['id'], msg['ret'])
         else:
-            await self.on_custom_message(chan, msg)
+            await self.on_custom_message(client, msg)
 
-    async def on_custom_message(self, chan: Channel, msg: Message) -> None:
+    async def on_custom_message(self, _: Client, msg: Message) -> None:
         logger.error(f'received unknown message: {msg!r}')
 
-    async def on_disconnect(self, chan: Channel) -> None:
+    async def on_disconnect(self, _: Client) -> None:
         """
         Called when client disconnects.
         """
         logger.debug('closed ws connection')
-        self._channels.remove(chan)
+        self._client = None
 
-        if self._is_single_mode and not self._channels:
+        if self._wait_for_reconnect:
             self._lost_on = this_lost_on = time.perf_counter()
             wait_for = self._reconnect_timeout_sec
 
             def after_sleep(_: asyncio.Task):
-                if not self._channels and self._lost_on == this_lost_on:
+                if self._client is None and self._lost_on == this_lost_on:
                     logger.debug(f'client did not reconnect in {wait_for} sec')
                     raise KeyboardInterrupt
 
@@ -411,24 +415,26 @@ class Server:
         html = self._patch_html(base_html)
         return web.Response(text=html, content_type='text/html')
 
-    async def _send(self, data: Message):
-        for chan in self._channels:
-            await chan.send(data)
+    async def _send(self, data: Message, safe=False):
+        if self._client is None and safe:
+            return
+        else:
+            await self._client.send(data)
 
     async def _ws_lifecycle(self, request: web.Request):
-        chan = Channel(self._json_impl)
-        await chan.prepare(request)
+        client = Client(self._json_impl)
+        await client.prepare(request)
 
         # Do not `await`, otherwise it will block async for loop
-        asyncio_create_task(self.on_connect(chan))
+        asyncio_create_task(self.on_connect(client))
 
-        async for msg in chan:
+        async for msg in client:
             assert isinstance(msg, dict), msg
             logger.debug('received ws message: %r', msg)
             # Process each message in separate task, do not `await` it
-            asyncio_create_task(self.on_message(chan, msg))
+            asyncio_create_task(self.on_message(client, msg))
 
-        await self.on_disconnect(chan)
+        await self.on_disconnect(client)
 
     #
     # Calls from JS
