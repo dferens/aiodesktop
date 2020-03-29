@@ -383,7 +383,7 @@ class Server:
         return JS_INLINE % dict(
             script_url=self.reverse_url(
                 name='private-static',
-                filename='bootstrap.js',
+                filename='aiodesktop.js',
             ),
             ws_url=self.reverse_url('private-ws'),
             init_function=self._init_js_function,
